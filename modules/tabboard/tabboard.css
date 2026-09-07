@@ -211,8 +211,10 @@ body {
 /* Scrollbar */
 #tabboard::-webkit-scrollbar,
 .kanban-drag::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  /* 加粗到 10px(原 6px 太细,深色主题 / Mac overlay scrollbar 下用户可能完全看不到),
+     横向滚动条高度对应行高,做到视觉一致 */
+  width: 10px;
+  height: 10px;
 }
 
 #tabboard::-webkit-scrollbar-track,
@@ -222,13 +224,14 @@ body {
 
 #tabboard::-webkit-scrollbar-thumb,
 .kanban-drag::-webkit-scrollbar-thumb {
-  background: #e0e0e0;
-  border-radius: 3px;
+  /* 提高对比度:#a0a0a0 比原 #e0e0e0 在浅色背景下明显得多 */
+  background: #a0a0a0;
+  border-radius: 5px;
 }
 
 #tabboard::-webkit-scrollbar-thumb:hover,
 .kanban-drag::-webkit-scrollbar-thumb:hover {
-  background: #c0c0c0;
+  background: #707070;
 }
 
 /* 拖拽时的样式 */

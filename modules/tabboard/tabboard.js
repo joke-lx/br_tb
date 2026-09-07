@@ -130,6 +130,18 @@ class AppShell {
   _setupStorageChangeListener() {
     chrome.storage.onChanged.addListener((changes, namespace) => {
       if (namespace !== 'local') return;
+
+      // ⚠️ 去抖关键:仅 settings.activeNamespace 字段变化(ns 切换)
+      // 时,view 自己已经调 render()(立即响应,不卡顿)。如果这里也 100ms 后再 render
+      // 一次,看板会被「innerHTML='' → 重建 → 再 innerHTML='' → 再重建」两次,可见抖动。
+      // 解决:跳过 ns-only 变化。其他 settings(主题、closeAfterCollect 等)仍走这条路径。
+      if (changes.settings && !changes.groups && !changes.tabs
+          && !changes.timelineSnapshots && !changes.recordings && !changes.recordingState) {
+        const oldNs = changes.settings.oldValue?.activeNamespace;
+        const newNs = changes.settings.newValue?.activeNamespace;
+        if (oldNs !== newNs) return;
+      }
+
       if (this.storageChangeTimer) clearTimeout(this.storageChangeTimer);
       this.storageChangeTimer = setTimeout(async () => {
         const data = await this.dataManager.loadData();

@@ -357,11 +357,14 @@ body {
   margin-top: 4px;
 }
 
-/* ns chip 列表:所有可选 ns 一目了然,不依赖 datalist 焦点交互 */
+/* ns chip 列表:所有可选 ns 一目了然,不依赖 datalist 焦点交互。
+   限定 max-height + 滚动,避免 ns 数过多(>5)时 panel 撑高挡住下方分组列表 */
 .namespace-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
 }
 
 .ns-chip {

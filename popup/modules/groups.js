@@ -219,7 +219,7 @@ export async function loadNamespaces({ onChange } = {}) {
     }
   }
 
-  // ── 事件绑定(保留四重提交保险,防 popup 关闭丢保存) ──
+  // ── 事件绑定(三重显式提交入口,防 popup 关闭丢保存) ──
   // 1) change 事件:用户按 Enter 或失焦时触发(popup 关闭前可能丢失,所以不能是唯一入口)
   input.addEventListener('change', (e) => {
     commitSwitch(e.target.value.trim());
@@ -236,20 +236,10 @@ export async function loadNamespaces({ onChange } = {}) {
     }
   });
 
-  // 3) input 事件 + 250ms 防抖:用户一边输一边自动保存,
-  //    避免「输完直接点外面 popup 关闭 → change 没机会触发 → 没保存」这条丢保存路径
-  let debounceTimer = null;
-  input.addEventListener('input', (e) => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    const newNs = e.target.value.trim();
-    if (!newNs || newNs === activeNs) return;
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      commitSwitch(newNs);
-    }, 250);
-  });
+  // ⚠️ 故意不挂 input 防抖自动提交:用户明确要求「显式确认才提交」(避免每按一键 250ms 后就被自动切 ns,
+  //    即使还没按 Enter / 应用按钮)。保留 change / Enter / Apply / chip 四重显式入口已足够。
 
-  // 4) 「应用」按钮:显式保存入口,鼠标点击走 mousedown 防 popup blur
+  // 3) 「应用」按钮:显式保存入口,鼠标点击走 mousedown 防 popup blur
   const applyBtn = container.querySelector('#namespaceApply');
   if (applyBtn) {
     applyBtn.addEventListener('mousedown', (e) => {
@@ -259,7 +249,7 @@ export async function loadNamespaces({ onChange } = {}) {
     });
   }
 
-  // 5) chip 列表:点哪个直接切哪个(active chip 高亮)
+  // 4) chip 列表:点哪个直接切哪个(active chip 高亮)
   container.querySelectorAll('.ns-chip').forEach(chip => {
     chip.addEventListener('mousedown', (e) => {
       // mousedown 优先于 click/blur,避免 popup 因 input blur 关闭
@@ -268,7 +258,7 @@ export async function loadNamespaces({ onChange } = {}) {
     });
   });
 
-  // 6) 面板外点击收起。用「捕获阶段(capture)」监听:popup 内其他组件
+  // 5) 面板外点击收起。用「捕获阶段(capture)」监听:popup 内其他组件
   //    (输入框/按钮/弹层)可能在 mousedown 冒泡阶段 stopPropagation,
   //    捕获阶段最先触发,保证「点外面关闭」一定生效。
   //    (每次重渲染移除旧监听再挂新监听,避免累积;container 内点击由各自的

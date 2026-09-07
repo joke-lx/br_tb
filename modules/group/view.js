@@ -122,33 +122,11 @@ class GroupView {
     const visibleGroups = this._getVisibleGroups();
     stats.textContent = `${totalTabs} 个标签页 · ${visibleGroups.length}/${this.groups.length} 个分组显示`;
 
-    // 只有没有任何分组时才显示空状态
-    if (this.groups.length === 0) {
-      tabboard.innerHTML = '';
-      emptyState.style.display = 'flex';
-      return;
-    }
-
+    // ⚠️ 关键修复:不要在 group view 里 show 全局 emptyState。
+    // 原行为:this.groups.length === 0 → show 全局 emptyState + 早返回 → 用户刚创建空 ns 时,
+    //    ns-panel 不渲染 + 切不到 default → 表现为「新建 ns 自动消失」(实际 activeNamespace 里还在,
+    //    只是 UI 没了切换入口)。全局 emptyState 是给 timeline view 用的,group view 走 per-ns msg。
     emptyState.style.display = 'none';
-
-    // 【ns】当前 ns 没有分组时,明确告知「默认分组在 default」,避免以为分组被删
-    if (visibleGroups.length === 0) {
-      const noVisibleMsg = document.createElement('div');
-      noVisibleMsg.className = 'no-visible-groups-message';
-      if (this.groups.length === 0) {
-        noVisibleMsg.innerHTML = `
-          <div>当前命名空间「${escapeHtml(this.activeNamespace)}」暂无分组</div>
-          ${this.activeNamespace !== 'default'
-            ? `<div style="margin-top:8px;font-size:12px;color:#888;">默认分组在「default」中,点击上方命名空间徽章可切换回来</div>`
-            : `<div style="margin-top:8px;font-size:12px;color:#888;">点击「+ 添加分组」创建第一个分组</div>`}`;
-      } else {
-        noVisibleMsg.textContent = '当前没有显示的分组，请点击"筛选"按钮选择要显示的分组';
-      }
-      noVisibleMsg.style.cssText = 'text-align: center; padding: 40px; color: #888; font-size: 14px;';
-      tabboard.appendChild(noVisibleMsg);
-      this._setupGroupActionButtons();
-      return;
-    }
 
     // 【ns】命名空间切换器,放在操作按钮区最前。识别优先 + 下拉式:
     // 当前 ns 以高权重徽章展示,全部 ns 的 chips 收进「点击徽章展开」的下拉面板,
@@ -160,6 +138,9 @@ class GroupView {
     // ⚠️ 不再挂 datalist:<input list> 会和 Chrome 自身的表单历史 autofill 下拉冲突。
     // ⚠️ 外层必须包一个纵向 wrapper:.board-actions-header 是横向 flex 容器;
     //    下拉面板 absolute 定位,打开时悬浮不撑高工具栏。
+    //
+    // ⚠️ 必须先构建 actionsHeader(把 ns-panel 拼进去)再判断空状态 —— 即使 active ns 没有分组,
+    //    也要把 ns-panel 渲染出来,用户才能从空 ns 切回 default(否则表现为「新建 ns 自动消失」)。
     const availableNamespaces = this._getAvailableNamespaces();
     const nsSwitcherHtml = availableNamespaces.length > 1 ? `
       <div class="ns-switcher-wrap">
@@ -203,7 +184,9 @@ class GroupView {
       </div>
     `;
 
-    // 添加操作按钮区域
+    // 添加操作按钮区域(始终渲染,即便是空 ns —— 保证 ns-panel 切换器始终可用)
+    // 同步在右侧加自定义横向滚动条(board-kanban-scrollbar-mirror),sticky 到视口左侧,
+    // 解决「非全屏时原生滚动条看不到」的痛点。
     const actionsHeader = document.createElement('div');
     actionsHeader.className = 'board-actions-header';
     actionsHeader.innerHTML = `
@@ -215,19 +198,34 @@ class GroupView {
       <button class="board-action-btn import-bookmarks-btn" title="从浏览器书签导入">导入书签</button>
       <button class="board-action-btn export-groups-btn" title="导出分组数据">导出</button>
       <button class="board-action-btn import-groups-btn" title="导入分组数据">导入</button>
+      <div class="kanban-scrollbar-mirror" id="board-kanban-scrollbar" aria-hidden="true">
+        <div class="kanban-scrollbar-thumb" id="board-kanban-scrollbar-thumb"></div>
+      </div>
     `;
 
-    // 清空并添加操作按钮
+    // 清空并添加操作按钮(ns-panel 始终在 tabboard 顶部可见,空 ns 也能切回 default)
+    // ⚠️ 关键:tabboard.innerHTML = '' 会清掉所有 kanban-board,新建 jKanban 实例后 #tabboard.scrollLeft
+    // 重置为 0 → 用户已滚到的右侧 board 瞬间跳回最左,视觉抖动。保存并恢复 scrollLeft。
+    const savedScrollLeft = tabboard.scrollLeft;
     tabboard.innerHTML = '';
     tabboard.appendChild(actionsHeader);
 
-    // 如果没有可见分组，显示提示
-    if (visibleGroups.length === 0) {
-      // 注:上面的早期 return 已经处理了「this.groups.length === 0」(整个 active ns 都空)的情况。
-      // 这里只剩下「active ns 内有 group,但都被 visible=false 隐藏」一种情形。
+    // 【ns】active ns 内没有可见分组时的 per-ns 提示:
+    // - this.groups.length === 0:active ns 完全空(用户刚切换到新 ns 或筛选过深)
+    // - visibleGroups.length === 0:active ns 有 group 但都被 visible=false 隐藏
+    // 两种情况都仍要绑定 panel 事件,让用户能切回 default 或调整筛选
+    if (this.groups.length === 0 || visibleGroups.length === 0) {
       const noVisibleMsg = document.createElement('div');
       noVisibleMsg.className = 'no-visible-groups-message';
-      noVisibleMsg.textContent = '当前没有显示的分组,请点击"筛选"按钮选择要显示的分组';
+      if (this.groups.length === 0) {
+        noVisibleMsg.innerHTML = `
+          <div>当前命名空间「${escapeHtml(this.activeNamespace)}」暂无分组</div>
+          ${this.activeNamespace !== 'default'
+            ? `<div style="margin-top:8px;font-size:12px;color:#888;">默认分组在「default」中,点击上方命名空间徽章可切换回来</div>`
+            : `<div style="margin-top:8px;font-size:12px;color:#888;">点击「+ 添加分组」创建第一个分组</div>`}`;
+      } else {
+        noVisibleMsg.textContent = '当前没有显示的分组，请点击"筛选"按钮选择要显示的分组';
+      }
       noVisibleMsg.style.cssText = 'text-align: center; padding: 40px; color: #888; font-size: 14px;';
       tabboard.appendChild(noVisibleMsg);
       this._setupGroupActionButtons();
@@ -262,6 +260,18 @@ class GroupView {
         enabled: false
       }
     });
+
+    // ⚠️ 恢复 scrollLeft:innerHTML='' 后 tabboard.scrollLeft 被重置为 0,
+    // 但用户之前已经滚到右侧 board(view.js:206 保存了 savedScrollLeft)。
+    // 在新 kanban DOM 创建完后恢复,避免视觉跳回左侧。
+    if (savedScrollLeft > 0) {
+      // 延迟到下一个 frame,确保 jKanban 已经把 .kanban-container 添加到 DOM
+      // 且 scrollWidth 已反映新内容宽度。
+      requestAnimationFrame(() => {
+        const maxScroll = tabboard.scrollWidth - tabboard.clientWidth;
+        tabboard.scrollLeft = Math.min(savedScrollLeft, maxScroll);
+      });
+    }
 
     // 设置看板操作按钮
     this._setupBoardActions();
@@ -343,8 +353,121 @@ class GroupView {
     // 绑定分组视图操作按钮
     this._setupGroupActionButtons();
 
+    // 初始化自定义顶部滚动条(同步 #tabboard 的 scrollLeft)
+    this._setupKanbanHScrollMirror();
+
     // 绑定看板内按钮(Open/Clear/Del/Goto)的事件委托,避免每次重渲染重复绑定导致事件堆叠
     this._setupBoardActionDelegation();
+  }
+
+  /**
+   * 自定义顶部横向滚动条 —— 同步 #tabboard 的 scrollLeft 到 actions header 右侧的镜像条。
+   *
+   * 痛点:原生滚动条贴在 #tabboard 底部,window 不全屏时(高度 < board 高度 + actions header)
+   * 会被裁掉,用户看不到滚动条 → 无法横向滚到第 6、7 个 board。
+   * 方案:把镜像条放在 actions header 同一行右侧,position: sticky 让它随横向滚动保持可见。
+   * 行为:
+   *   - 监听 #tabboard scroll + window resize → 更新 thumb 的 width / translateX
+   *   - thumb 宽度 = (clientWidth / scrollWidth) × 100%,反映可见内容比例
+   *   - thumb 位置 = scrollLeft / (scrollWidth - clientWidth) × (trackWidth - thumbWidth)
+   *   - 点击 track 跳转,拖动 thumb 滚动(参见 _setupKanbanHScrollMirrorDrag)
+   */
+  _setupKanbanHScrollMirror() {
+    const tabboard = document.getElementById('tabboard');
+    const track = document.getElementById('board-kanban-scrollbar');
+    const thumb = document.getElementById('board-kanban-scrollbar-thumb');
+    if (!tabboard || !track || !thumb) return;
+
+    // 卸载旧监听(避免 render() 多次调用累积)
+    if (tabboard.__kanbanHScrollUpdate) {
+      tabboard.removeEventListener('scroll', tabboard.__kanbanHScrollUpdate);
+      window.removeEventListener('resize', tabboard.__kanbanHScrollUpdate);
+    }
+    if (tabboard.__kanbanHScrollResizeObs) {
+      tabboard.__kanbanHScrollResizeObs.disconnect();
+    }
+
+    const update = () => {
+      const overflow = tabboard.scrollWidth - tabboard.clientWidth;
+      if (overflow <= 0 || tabboard.scrollWidth === 0) {
+        track.style.visibility = 'hidden';
+        return;
+      }
+      track.style.visibility = 'visible';
+      const ratio = tabboard.scrollLeft / overflow;
+      const thumbPct = (tabboard.clientWidth / tabboard.scrollWidth) * 100;
+      thumb.style.width = thumbPct + '%';
+      const trackWidth = track.clientWidth;
+      const thumbWidth = trackWidth * thumbPct / 100;
+      thumb.style.transform = `translateX(${ratio * (trackWidth - thumbWidth)}px)`;
+    };
+
+    tabboard.__kanbanHScrollUpdate = update;
+    tabboard.addEventListener('scroll', update);
+    window.addEventListener('resize', update);
+
+    // 监听 #tabboard 内容尺寸变化(kanban 重渲染后宽度变)
+    if (typeof ResizeObserver !== 'undefined') {
+      tabboard.__kanbanHScrollResizeObs = new ResizeObserver(update);
+      tabboard.__kanbanHScrollResizeObs.observe(tabboard);
+    }
+
+    // 拖动 thumb 滚动
+    if (tabboard.__kanbanHScrollMouseUp) {
+      document.removeEventListener('mousemove', tabboard.__kanbanHScrollMouseMove);
+      document.removeEventListener('mouseup', tabboard.__kanbanHScrollMouseUp);
+    }
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartScrollLeft = 0;
+    thumb.addEventListener('mousedown', (e) => {
+      dragging = true;
+      dragStartX = e.clientX;
+      dragStartScrollLeft = tabboard.scrollLeft;
+      thumb.classList.add('dragging');
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    const onMouseMove = (e) => {
+      if (!dragging) return;
+      const overflow = tabboard.scrollWidth - tabboard.clientWidth;
+      const trackWidth = track.clientWidth;
+      const thumbPct = (tabboard.clientWidth / tabboard.scrollWidth) * 100;
+      const thumbWidth = trackWidth * thumbPct / 100;
+      const delta = e.clientX - dragStartX;
+      const scrollDelta = (delta / Math.max(1, trackWidth - thumbWidth)) * overflow;
+      tabboard.scrollLeft = Math.max(0, Math.min(overflow, dragStartScrollLeft + scrollDelta));
+    };
+    const onMouseUp = () => {
+      if (dragging) {
+        dragging = false;
+        thumb.classList.remove('dragging');
+      }
+    };
+    tabboard.__kanbanHScrollMouseMove = onMouseMove;
+    tabboard.__kanbanHScrollMouseUp = onMouseUp;
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+
+    // 点击 track 跳转(注意:thumb 自身的 mousedown 已经在 thumb 上阻止了 click 冒泡)
+    if (tabboard.__kanbanHScrollTrackClick) {
+      track.removeEventListener('click', tabboard.__kanbanHScrollTrackClick);
+    }
+    const onTrackClick = (e) => {
+      if (e.target === thumb) return;  // thumb 自己处理拖拽
+      const rect = track.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const thumbPct = (tabboard.clientWidth / tabboard.scrollWidth) * 100;
+      const thumbWidth = rect.width * thumbPct / 100;
+      const ratio = (clickX - thumbWidth / 2) / Math.max(1, rect.width - thumbWidth);
+      const overflow = tabboard.scrollWidth - tabboard.clientWidth;
+      tabboard.scrollLeft = Math.max(0, Math.min(overflow, ratio * overflow));
+    };
+    tabboard.__kanbanHScrollTrackClick = onTrackClick;
+    track.addEventListener('click', onTrackClick);
+
+    // 初始化一次(确保首次渲染就有正确 thumb 位置)
+    update();
   }
 
   /**
@@ -711,7 +834,8 @@ class GroupView {
    * 【ns】绑定 ns 切换器事件。
    * - 徽章点击展开/收起下拉面板(识别元素本身承担切换入口)
    * - 「＋ 新建命名空间」条目展开创建输入行
-   * - change / Enter / input 防抖 / 应用按钮 四重保险,避免任一路径丢失保存
+   * - change / Enter / 应用按钮 三重显式保存入口(防 popup 关闭 / blur 丢保存)
+   * - 故意不挂 input 防抖:用户明确要求「显式确认才提交」(避免每按一键 250ms 后自动切 ns)
    * - 走 dataManager.sendMessage('setActiveNamespace', { namespace }) 切 ns
    * - 成功后 loadData + updateData + render()(render 重建 DOM,面板自然回到收起态)
    * - 失败时保留输入,便于修正重试
@@ -823,19 +947,10 @@ class GroupView {
       }
     });
 
-    // 4) input 防抖:用户一边输一边提交,避免「输完关页面/关 popup」丢保存
-    let debounceTimer = null;
-    nsInput.addEventListener('input', (e) => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      const newNs = e.target.value.trim();
-      if (!newNs || newNs === this.activeNamespace) return;
-      debounceTimer = setTimeout(() => {
-        debounceTimer = null;
-        commitSwitch.call(this, newNs);
-      }, 250);
-    });
+    // ⚠️ 故意不挂 input 防抖自动提交:用户明确要求「显式确认才提交」(避免每按一键 250ms 后就被自动切 ns,
+    //    即使还没按 Enter / 应用按钮)。保留 change / Enter / Apply / chip 四重显式入口已足够。
 
-    // 5) 「应用」按钮 — 显式保存入口
+    // 4) 「应用」按钮 — 显式保存入口
     const applyBtn = document.querySelector('#board-ns-apply');
     if (applyBtn && !applyBtn.__nsBound) {
       applyBtn.__nsBound = true;
@@ -846,7 +961,7 @@ class GroupView {
       });
     }
 
-    // 6) chip 列表(仅多 ns):点哪个直接切哪个(active chip 高亮)
+    // 5) chip 列表(仅多 ns):点哪个直接切哪个(active chip 高亮)
     document.querySelectorAll('#board-ns-chips .ns-chip').forEach(chip => {
       if (chip.__nsBound) return;
       chip.__nsBound = true;
@@ -857,7 +972,7 @@ class GroupView {
       });
     });
 
-    // 7) 面板外点击收起。用「捕获阶段(capture)」监听:看板/jKanban/弹层等组件
+    // 6) 面板外点击收起。用「捕获阶段(capture)」监听:看板/jKanban/弹层等组件
     //    可能在 mousedown 冒泡阶段调用 stopPropagation,冒泡监听会收不到;
     //    捕获阶段最先触发,任何冒泡拦截都挡不住「点外面关闭」。
     //    (重渲染时旧监听已随旧 DOM 失效,但 document 级监听会累积,
